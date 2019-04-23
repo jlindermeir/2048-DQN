@@ -33,27 +33,28 @@ def rand(arr):
     return np.random.randint(0,4)
 
 class DQNagent:
-    def __init__(self, game):
+    def __init__(self, game, hyparams, model=None):
         self.dim = game.dim
         self.game = game
-        self.memory = deque(maxlen=2000)
+        self.memory = deque(maxlen=hyparams['memory length'])
 
-        self.gamma = 0.8
-        self.epsilon = 1.0 # exploration rate
-        self.epsilon_min = 0.01
-        self.epsilon_decay = 0.995
-        self.learning_rate = 0.01
+        self.gamma = hyparams['gamma']
+        self.epsilon = hyparams['eps settings'][0] # exploration rate
+        self.epsilon_min = hyparams['eps settings'][1]
+        self.epsilon_decay = hyparams['eps settings'][2]
+        self.learning_rate = hyparams['learning rate']
+        self.batch_size = hyparams['batch size']
 
-        self.sPlot = False
-
-        self.model = self.cModel(self.dim**2)
+        if model:
+            self.model = model
+        else:
+            self.model = self.cModel(self.dim**2)
 
     def cModel(self, inptDim):
         model = Sequential()
         model.add(Dense(24, input_dim=inptDim, activation='relu'))
         model.add(Dense(24, activation='relu'))
         model.add(Dense(24, activation='relu'))
-        #model.add(Dense(32, activation='relu'))
         model.add(Dense(4, activation='linear'))
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
