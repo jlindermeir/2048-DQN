@@ -4,7 +4,7 @@ from agents import DQNagent
 
 dim = 2
 n = 5
-eps = 500
+eps = 400
 
 game = x2048(dim)
 agent = DQNagent(game)
