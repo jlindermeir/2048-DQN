@@ -33,27 +33,28 @@ def rand(arr):
     return np.random.randint(0,4)
 
 class DQNagent:
-    def __init__(self, game):
+    def __init__(self, game, hyparams, model=None):
         self.dim = game.dim
         self.game = game
-        self.memory = deque(maxlen=2000)
+        self.memory = deque(maxlen=hyparams['memory length'])
 
-        self.gamma = 0.8
-        self.epsilon = 1.0 # exploration rate
-        self.epsilon_min = 0.01
-        self.epsilon_decay = 0.995
-        self.learning_rate = 0.01
+        self.gamma = hyparams['gamma']
+        self.epsilon = hyparams['eps settings'][0] # exploration rate
+        self.epsilon_min = hyparams['eps settings'][1]
+        self.epsilon_decay = hyparams['eps settings'][2]
+        self.learning_rate = hyparams['learning rate']
+        self.batch_size = hyparams['batch size']
 
-        self.sPlot = False
-
-        self.model = self.cModel(self.dim**2)
+        if model:
+            self.model = model
+        else:
+            self.model = self.cModel(self.dim**2)
 
     def cModel(self, inptDim):
         model = Sequential()
         model.add(Dense(24, input_dim=inptDim, activation='relu'))
         model.add(Dense(24, activation='relu'))
         model.add(Dense(24, activation='relu'))
-        #model.add(Dense(32, activation='relu'))
         model.add(Dense(4, activation='linear'))
         model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
@@ -86,10 +87,9 @@ class DQNagent:
                 if row[i+1]!=0 and (zero or row[i]==row[i+1]): return True
         return False
 
-
-    def replay(self, batch_size):
+    def replay(self):
         x_batch, y_batch = [], []
-        minibatch = random.sample(self.memory, batch_size)
+        minibatch = random.sample(self.memory, self.batch_size)
         for state, action, reward, next_state, done in minibatch:
             if done:
                 target = reward
@@ -103,16 +103,15 @@ class DQNagent:
             y_batch.append(target_f.flatten())
         xarr = np.stack(x_batch)
         yarr = np.stack(y_batch)
-        #print(xarr.shape, yarr.shape)
         self.model.fit(xarr,yarr, batch_size=len(x_batch), verbose=0)
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
-    def train(self, batch_size=32, episodes=None):
+    def train(self, episodes=None):
         avgdur = 100
         scorearr = []
         turnarr = []
-        mtarr = [] #maximum tile
+        cscorearr = []
         earr = []
         i = 1
 
@@ -132,18 +131,18 @@ class DQNagent:
 
                 scorearr.append(self.game.score)
                 turnarr.append(self.game.turns)
-                mtarr.append(np.amax(self.game.arr))
+                cscorearr.append(sum(scorearr))
                 earr.append(self.epsilon)
 
                 if not i % avgdur:
                     gametime = (time() - counter)/avgdur
                     avgarr = scorearr[-avgdur:-1]
                     print("GAME {} SCORE[median:{} mean:{}, stddev:{:.2}], e: {:.2}, time per game {}".format(i, int(np.median(avgarr)), np.mean(avgarr), np.std(avgarr), self.epsilon, gametime))
-                    #if self.sPlot: self.plot([scorearr, mtarr, earr], sigma=avgdur)
+
                     counter = time()
 
-                if len(self.memory) > batch_size:
-                    self.replay(batch_size)
+                if len(self.memory) > self.batch_size:
+                    self.replay()
 
                 if episodes and i==episodes:
                     break
@@ -151,23 +150,22 @@ class DQNagent:
             except KeyboardInterrupt:
                 inpt = readchar.readchar()
                 if inpt == 'p':
-                    tgame = game(self.dim)
-                    tgame.play(self.predict, wfu=True)
+                    self.game.__init__(self.dim)
+                    self.game.play(self.predict, wfu=True)
+                    self.game.__init__(self.dim)
                 elif inpt == 'g':
-                    self.sPlot = True
-                    self.plot([scorearr, mtarr, earr], sigma=avgdur)
+                    self.plot([scorearr, cscorearr, earr], sigma=avgdur)
                 elif inpt == 'q':
                     print()
                     break
                 print("\nResuming training...")
-        return scorearr, turnarr, mtarr, earr
+        return scorearr, turnarr, cscorearr, earr
 
     def plot(self, arrlist, sigma=None):
         plt.figure(1)
-        #plt.clf()
         for i,arr in enumerate(arrlist):
             plt.subplot(1e2 * len(arrlist) + 10 + (i+1))
-            if sigma and (i+1) != len(arrlist):
+            if sigma and i == 0:
                 plt.plot(arr, 'k+')
                 plt.plot(gaussian_filter(arr, sigma, mode='reflect'), 'r')
             else:
