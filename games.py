@@ -68,11 +68,12 @@ class x2048:
         print(self.arr)
 
     def play(self, agent, pts=True, wfu=False):
-        if pts: self.showState()
+        self.__init__(self.dim)
         while not self.lost:
+            if pts: self.showState()
             move = agent(self.arr)
             if wfu:
                 print("Next Move: %i" % move)
                 if 'q' == readchar.readchar(): break
             self.move(move)
-            if pts: self.showState()
+        return self.score, self.turns

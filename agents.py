@@ -4,7 +4,7 @@ from time import time
 import random
 import readchar
 from collections import deque
-from keras.models import Sequential
+from keras.models import Sequential, load_model
 from keras.layers import Dense
 from keras.optimizers import Adam
 
@@ -36,27 +36,42 @@ class DQNagent:
     def __init__(self, game, hyparams, model=None):
         self.dim = game.dim
         self.game = game
-        self.memory = deque(maxlen=hyparams['memory length'])
+        self.memory = deque(maxlen=int(hyparams[6]))
 
-        self.gamma = hyparams['gamma']
-        self.epsilon = hyparams['eps settings'][0] # exploration rate
-        self.epsilon_min = hyparams['eps settings'][1]
-        self.epsilon_decay = hyparams['eps settings'][2]
-        self.learning_rate = hyparams['learning rate']
-        self.batch_size = hyparams['batch size']
+        self.learning_rate = max(hyparams[0], 0)
+        self.batch_size = int(hyparams[1])
+        self.epsilon = min(hyparams[2], 1) # exploration rate
+        self.epsilon_min = max(hyparams[3], 0)
+        self.epsilon_decay = min(hyparams[4], 0.999)
+        self.gamma = hyparams[5]
 
         if model:
             self.model = model
         else:
-            self.model = self.cModel(self.dim**2)
+            self.model = self.cModel4x4()
 
-    def cModel(self, inptDim):
-        model = Sequential()
-        model.add(Dense(24, input_dim=inptDim, activation='relu'))
-        model.add(Dense(24, activation='relu'))
-        model.add(Dense(24, activation='relu'))
-        model.add(Dense(4, activation='linear'))
-        model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+    def cModel(self, file=None):
+        if file:
+            return load_model(file)
+        else:
+            model = Sequential()
+            model.add(Dense(24, input_dim=self.dim**2, activation='relu'))
+            model.add(Dense(24, activation='relu'))
+            model.add(Dense(24, activation='relu'))
+            model.add(Dense(4, activation='linear'))
+            model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
+        return model
+
+    def cModel4x4(self, file=None):
+        if file:
+            return load_model(file)
+        else:
+            model = Sequential()
+            model.add(Dense(48, input_dim=self.dim**2, activation='relu'))
+            model.add(Dense(48, activation='relu'))
+            model.add(Dense(48, activation='relu'))
+            model.add(Dense(4, activation='linear'))
+            model.compile(loss='mse', optimizer=Adam(lr=self.learning_rate))
         return model
 
     def remember(self, state, action, reward, next_state, done):
@@ -107,46 +122,27 @@ class DQNagent:
         if self.epsilon > self.epsilon_min:
             self.epsilon *= self.epsilon_decay
 
-    def train(self, episodes=None):
+    def iTrain(self):
         avgdur = 100
+        earr = []
         scorearr = []
         turnarr = []
         cscorearr = []
-        earr = []
         i = 1
 
-        counter = time()
         while True:
             try:
-                self.game.__init__(self.dim)
-                while not self.game.lost:
-                    oldscore = self.game.score
-                    oldstate = self.game.arr
+                c_arrs = self.train()
 
-                    action = self.predict(self.game.arr)
-                    self.game.move(action)
-                    reward = self.game.score - oldscore
-
-                    self.remember(oldstate, action, reward, self.game.arr, self.game.lost)
-
-                scorearr.append(self.game.score)
-                turnarr.append(self.game.turns)
+                scorearr += c_arrs[0]
                 cscorearr.append(sum(scorearr))
                 earr.append(self.epsilon)
 
                 if not i % avgdur:
-                    gametime = (time() - counter)/avgdur
                     avgarr = scorearr[-avgdur:-1]
-                    print("GAME {} SCORE[median:{} mean:{}, stddev:{:.2}], e: {:.2}, time per game {}".format(i, int(np.median(avgarr)), np.mean(avgarr), np.std(avgarr), self.epsilon, gametime))
-
-                    counter = time()
-
-                if len(self.memory) > self.batch_size:
-                    self.replay()
-
-                if episodes and i==episodes:
-                    break
+                    print("GAME {} SCORE[median:{} mean:{}, stddev:{:.2}], e: {:.2}".format(i, int(np.median(avgarr)), np.mean(avgarr), np.std(avgarr), self.epsilon))
                 i+=1
+
             except KeyboardInterrupt:
                 inpt = readchar.readchar()
                 if inpt == 'p':
@@ -159,7 +155,34 @@ class DQNagent:
                     print()
                     break
                 print("\nResuming training...")
-        return scorearr, turnarr, cscorearr, earr
+
+    def train(self, episodes=1, savedir=None, pts = False):
+        scorearr = []
+        turnarr = []
+
+        time0 = time()
+        for i in range(episodes):
+            if pts: print("Training episode %i/%i" % (i, episodes), end='\r')
+            self.game.__init__(self.dim)
+            while not self.game.lost:
+                oldscore = self.game.score
+                oldstate = self.game.arr
+                action = self.predict(self.game.arr)
+                self.game.move(action)
+                reward = self.game.score - oldscore
+                self.remember(oldstate, action, reward, self.game.arr, self.game.lost)
+
+            scorearr.append(float(self.game.score))
+            turnarr.append(float(self.game.turns))
+
+            if savedir: self.model.save('%s/eps%i.h5' % (savedir, i))
+            if len(self.memory) > self.batch_size:
+                self.replay()
+        time1 = time()
+        avgtime = (time1/time0)/episodes
+        if pts: print('Training done after %f s (%f per ep).' % (time1 - time0, avgtime),' '*20)
+        return scorearr, turnarr, avgtime
+
 
     def plot(self, arrlist, sigma=None):
         plt.figure(1)
@@ -175,3 +198,24 @@ class DQNagent:
     def disableGPU(self):
         os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
+
+    def eval(self, n_games, pts=False):
+        scorearr = []
+        turnarr = []
+        maxtile = 0
+
+        time0 = time()
+        for i in range(n_games):
+            if pts: print("Evaluating, game %i/%i..." % (i, n_games), end='\r')
+            score, turns = self.game.play(self.predict, pts=False)
+            scorearr.append(score)
+            turnarr.append(turns)
+            maxtile = max(np.max(self.game.arr), maxtile)
+        score_mean = np.mean(scorearr)
+        score_err = np.std(scorearr)
+        turns_mean = np.mean(turnarr)
+        turns_err = np.std(turnarr)
+        time1 = time()
+        avgtime = (time1 - time0)/n_games
+        if pts: print('Evaluation done after %f s (%f per game).' % (time1 - time0, avgtime), ' '*20)
+        return score_mean, score_err, maxtile, turns_mean, turns_err
